@@ -51,5 +51,8 @@ async def main():
         await driver.close()
 
 
+__main__ = lambda: asyncio.run(main())
+
+
 if __name__ == "__main__":
     asyncio.run(main())

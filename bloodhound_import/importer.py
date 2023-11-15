@@ -271,7 +271,15 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
             trust_type = trust['TrustType']
             direction = trust['TrustDirection']
             props = {}
-            if direction in [1, 3]:
+            if direction == 'Bidirectional':
+                props = dict(
+                    source=identifier,
+                    target=trust['TargetDomainSid'],
+                    trusttype=trust['TrustType'],
+                    transitive=trust['IsTransitive'],
+                    sidfiltering=trust['SidFilteringEnabled'],
+                )
+            elif direction in [1, 3]:
                 props = dict(
                     source=identifier,
                     target=trust['TargetDomainSid'],

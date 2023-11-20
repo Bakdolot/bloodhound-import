@@ -18,6 +18,8 @@ async def main():
     argparser.add_argument("-p", "--port", help="Port of neo4j", default=7687)
     argparser.add_argument("-s", "--scheme", help="URI Scheme used to communicate with neo4j", default="bolt")
     argparser.add_argument("-v", "--verbose", help="Verbose output", action='store_true')
+    argparser.add_argument("-db", help="Database for enterprise version", default="neo4j")
+
     arguments = argparser.parse_args()
 
     if arguments.database_password is None:
@@ -36,7 +38,7 @@ async def main():
 
     try:
         try:
-            async with driver.session() as session:
+            async with driver.session(database=arguments.db) as session:
                 logging.debug("Adding constraints to the neo4j database")
                 await session.write_transaction(add_constraints)
         except ClientError:
@@ -44,7 +46,7 @@ async def main():
 
         logging.info("Parsing %s files", len(arguments.files))
         for filename in arguments.files:
-            await parse_file(filename, driver)
+            await parse_file(filename, driver,arguments.db)
 
         logging.info("Done")
     finally:

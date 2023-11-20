@@ -248,6 +248,22 @@ async def parse_group(tx: neo4j.Transaction, group: dict):
         query = build_add_edge_query(member['ObjectType'], 'Group', 'MemberOf', '{isacl: false}')
         await tx.run(query, props=dict(source=member['ObjectIdentifier'], target=identifier))
 
+    suffixes = [
+        "-512",
+        "-516",
+        "-519",
+        "S-1-5-32-544",
+        "S-1-5-32-548",
+        "S-1-5-32-549",
+        "S-1-5-32-550",
+        "S-1-5-32-551",
+    ]
+
+    highvalue = any(identifier.endswith(suffix) for suffix in suffixes)
+
+    # Добавим сопоставление и установку highvalue
+    match_query = 'MATCH (n:Group {objectid: $objectId}) SET n.highvalue = $highvalue'
+    await tx.run(match_query, objectId=identifier, highvalue=highvalue)
 
 async def parse_domain(tx: neo4j.Transaction, domain: dict):
     """Parse a domain object.
@@ -264,14 +280,25 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
     if 'Aces' in domain and domain['Aces'] is not None:
         await process_ace_list(domain['Aces'], identifier, 'Domain', tx)
 
-    trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown'}
+    trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown',}
+
     if 'Trusts' in domain and domain['Trusts'] is not None:
+
         query = build_add_edge_query('Domain', 'Domain', 'TrustedBy', '{sidfiltering: prop.sidfiltering, trusttype: prop.trusttype, transitive: prop.transitive, isacl: false}')
         for trust in domain['Trusts']:
             trust_type = trust['TrustType']
             direction = trust['TrustDirection']
             props = {}
-            if direction in [1, 3]:
+            if direction == 'Bidirectional':
+                props = dict(
+                    source=identifier,
+                    target=trust['TargetDomainSid'],
+                    trusttype=trust['TrustType'],
+                    transitive=trust['IsTransitive'],
+                    sidfiltering=trust['SidFilteringEnabled'],
+                )
+                print("direction DONE!")
+            elif direction in [1, 3]:
                 props = dict(
                     source=identifier,
                     target=trust['TargetDomainSid'],
@@ -347,7 +374,7 @@ async def parse_container(tx: neo4j.Transaction, container: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
 
-async def parse_zipfile(filename: str, driver: neo4j.Driver):
+async def parse_zipfile(filename: str, driver: neo4j.Driver, db: str):
     """Parse a bloodhound zip file.
 
     Arguments:
@@ -363,10 +390,10 @@ async def parse_zipfile(filename: str, driver: neo4j.Driver):
             with NamedTemporaryFile(suffix=basename(file)) as temp:
                 temp.write(zip_file.read(file))
                 temp.flush()
-                await parse_file(temp.name, driver)
+                await parse_file(temp.name, driver, db)
 
 
-async def parse_file(filename: str, driver: neo4j.AsyncDriver):
+async def parse_file(filename: str, driver: neo4j.AsyncDriver, db: str):
     """Parse a bloodhound file.
 
     Arguments:
@@ -377,9 +404,9 @@ async def parse_file(filename: str, driver: neo4j.AsyncDriver):
 
     if filename.endswith('.zip'):
         logging.info("File appears to be a zip file, importing all containing JSON files..")
-        await parse_zipfile(filename, driver)
+        await parse_zipfile(filename, driver, db)
         return
-
+    
     with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
         meta = ijson.items(f, 'meta')
         for o in meta:
@@ -407,7 +434,7 @@ async def parse_file(filename: str, driver: neo4j.AsyncDriver):
     count = 0
     f = codecs.open(filename, 'r', encoding='utf-8-sig')
     objs = ijson.items(f, 'data.item')
-    async with driver.session() as session:
+    async with driver.session(database=db) as session:
         for entry in objs:
             try:
                 await session.write_transaction(parse_function, entry)

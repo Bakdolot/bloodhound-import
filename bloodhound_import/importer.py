@@ -297,7 +297,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                     transitive=trust['IsTransitive'],
                     sidfiltering=trust['SidFilteringEnabled'],
                 )
-                print("direction DONE!")
+
             elif direction in [1, 3]:
                 props = dict(
                     source=identifier,

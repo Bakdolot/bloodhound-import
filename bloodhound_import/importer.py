@@ -28,6 +28,12 @@ def build_add_edge_query(source_label: str, target_label: str, edge_type: str, e
     return insert_query.format(source_label, target_label, edge_type, edge_props)
 
 
+async def process_member_of_relation(tx: neo4j.Transaction, source_id: str, target_id: str) -> None:
+    query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
+    props = {'source': source_id, 'target': target_id}
+    await tx.run(query, props=props)
+
+
 async def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.Transaction) -> None:
     for entry in ace_list:
         principal = entry['PrincipalSID']
@@ -98,9 +104,12 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in ou and ou['Links']:
-        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        query = build_add_edge_query('OU', 'GPO', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
-            await tx.run(query, props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced']))
+            await tx.run(
+                query,
+                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
+            )
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -243,7 +252,9 @@ async def parse_group(tx: neo4j.Transaction, group: dict):
 
     if 'Aces' in group and group['Aces'] is not None:
         await process_ace_list(group['Aces'], identifier, "Group", tx)
-
+    if 'Members' in group and group['Members'] is not None:
+        for member in group['Members']:
+            await process_member_of_relation(tx, member['ObjectIdentifier'], identifier)
     for member in members:
         query = build_add_edge_query(member['ObjectType'], 'Group', 'MemberOf', '{isacl: false}')
         await tx.run(query, props=dict(source=member['ObjectIdentifier'], target=identifier))
@@ -326,7 +337,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in domain and domain['Links']:
-        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        query = build_add_edge_query('Domain', 'GPO', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in domain['Links']:
             await tx.run(
                 query,
@@ -350,6 +361,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                     query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                     for computer in affected_computers:
                         await tx.run(query, props=dict(source=computer['ObjectIdentifier'], target=target['ObjectIdentifier']))
+
 
 async def parse_container(tx: neo4j.Transaction, container: dict):
     """Parse a Container object.

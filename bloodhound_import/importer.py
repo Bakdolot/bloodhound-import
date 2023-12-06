@@ -157,7 +157,7 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
 
     if 'PrimaryGroupSID' in computer and computer['PrimaryGroupSID']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
-        await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSID']))
 
     if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
@@ -211,9 +211,9 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
 
     await tx.run(property_query, props=props)
 
-    if 'PrimaryGroupSid' in user and user['PrimaryGroupSid']:
+    if 'PrimaryGroupSID' in user and user['PrimaryGroupSID']:
         query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
-        await tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSID']))
 
     if 'AllowedToDelegate' in user and user['AllowedToDelegate']:
         query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')

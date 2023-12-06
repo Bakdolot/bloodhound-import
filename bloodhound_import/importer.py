@@ -155,7 +155,7 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
 
     await tx.run(property_query, props=props)
 
-    if 'PrimaryGroupSid' in computer and computer['PrimaryGroupSid']:
+    if 'PrimaryGroupSID' in computer and computer['PrimaryGroupSID']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
         await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
 

@@ -264,7 +264,7 @@ async def parse_group(tx: neo4j.Transaction, group: dict):
 
     highvalue = any(identifier.endswith(suffix) for suffix in suffixes)
 
-    # Добавим сопоставление и установку highvalue
+    # Add a mapping and highvalue setting
     match_query = 'MATCH (n:Group {objectid: $objectId}) SET n.highvalue = $highvalue'
     await tx.run(match_query, objectId=identifier, highvalue=highvalue)
 
@@ -322,6 +322,35 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                 logging.error("Could not determine direction of trust... direction: %s", direction)
                 continue
             await tx.run(query, props=props)
+
+    members = [
+        GenericMember(MemberType="Group", MemberId=f"{domain['Sid']}-515"),
+        GenericMember(MemberType="Group", MemberId=f"{domain['Sid']}-513")
+    ]
+
+    everyone = Group(
+        ObjectIdentifier=f"{domain['Name']}-S-1-1-0",
+        Domain=domain['Name'],
+        Members=members,
+        Properties={"name": f"EVERYONE@{domain['Name']}", "domain": domain['Name']}
+    )
+
+    authUsers = Group(
+        ObjectIdentifier=f"{domain['Name']}-S-1-5-11",
+        Domain=domain['Name'],
+        Members=members,
+        Properties={"name": f"AUTHENTICATED USERS@{domain['Name']}", "domain": domain['Name']}
+    )
+
+    await tx.run("CREATE (g:Group {objectid: $objectId, domain: $domain, name: $name})",
+                 objectId=everyone.ObjectIdentifier, domain=everyone.Domain, name=everyone.Properties["name"])
+    await tx.run("CREATE (g:Group {objectid: $objectId, domain: $domain, name: $name})",
+                 objectId=authUsers.ObjectIdentifier, domain=authUsers.Domain, name=authUsers.Properties["name"])
+
+    await tx.run("MATCH (d:Domain {objectid: $domainId}), (g:Group {objectid: $groupId}) MERGE (d)-[:Contains]->(g)",
+                 domainId=identifier, groupId=everyone.ObjectIdentifier)
+    await tx.run("MATCH (d:Domain {objectid: $domainId}), (g:Group {objectid: $groupId}) MERGE (d)-[:Contains]->(g)",
+                 domainId=identifier, groupId=authUsers.ObjectIdentifier)
 
     if 'ChildObjects' in domain and domain['ChildObjects']:
         targets = domain['ChildObjects']

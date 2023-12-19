@@ -98,11 +98,11 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in ou and ou['Links']:
-        query = build_add_edge_query('OU', 'GPO', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
             await tx.run(
                 query,
-                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
+                props=dict(source=gpo['GUID'].upper(), target=identifier, enforced=gpo['IsEnforced'])
             )
 
     options = [
@@ -359,12 +359,12 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in domain and domain['Links']:
-        query = build_add_edge_query('Domain', 'GPO', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        query = build_add_edge_query('GPO', 'Domain', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in domain['Links']:
             await tx.run(
                 query,
-                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
-            )
+                props=dict(source=gpo['GUID'].upper(), target=identifier, enforced=gpo['IsEnforced'])
+                         )
 
     options = [
         ('LocalAdmins', 'AdminTo'),

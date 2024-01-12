@@ -227,6 +227,15 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
 
     if 'SPNTargets' in user and user['SPNTargets'] is not None:
         await process_spntarget_list(user['SPNTargets'], identifier, tx)
+    suffixes = [
+        "-500",
+    ]
+
+    highvalue = any(identifier.endswith(suffix) for suffix in suffixes)
+
+    # Add a mapping and highvalue setting
+    match_query = 'MATCH (n:User {objectid: $objectId}) SET n.highvalue = $highvalue'
+    await tx.run(match_query, objectId=identifier, highvalue=highvalue)
 
 
 async def parse_group(tx: neo4j.Transaction, group: dict):
@@ -256,10 +265,10 @@ async def parse_group(tx: neo4j.Transaction, group: dict):
         "-516",
         "-519",
         "S-1-5-32-544",
-        "S-1-5-32-548",
-        "S-1-5-32-549",
-        "S-1-5-32-550",
-        "S-1-5-32-551",
+        "-518",
+        "-526",
+        "-527",
+        "S-1-5-9",
     ]
 
     highvalue = any(identifier.endswith(suffix) for suffix in suffixes)

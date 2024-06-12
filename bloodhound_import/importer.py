@@ -100,7 +100,10 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
     if 'Links' in ou and ou['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
-            await tx.run(query, props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced']))
+            await tx.run(
+                query,
+                props=dict(source=gpo['GUID'].upper(), target=identifier, enforced=gpo['IsEnforced'])
+            )
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -152,9 +155,9 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
 
     await tx.run(property_query, props=props)
 
-    if 'PrimaryGroupSid' in computer and computer['PrimaryGroupSid']:
+    if 'PrimaryGroupSID' in computer and computer['PrimaryGroupSID']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
-        await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSID']))
 
     if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
@@ -208,9 +211,9 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
 
     await tx.run(property_query, props=props)
 
-    if 'PrimaryGroupSid' in user and user['PrimaryGroupSid']:
+    if 'PrimaryGroupSID' in user and user['PrimaryGroupSID']:
         query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
-        await tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSID']))
 
     if 'AllowedToDelegate' in user and user['AllowedToDelegate']:
         query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')
@@ -224,6 +227,15 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
 
     if 'SPNTargets' in user and user['SPNTargets'] is not None:
         await process_spntarget_list(user['SPNTargets'], identifier, tx)
+    suffixes = [
+        "-500",
+    ]
+
+    highvalue = any(identifier.endswith(suffix) for suffix in suffixes)
+
+    # Add a mapping and highvalue setting
+    match_query = 'MATCH (n:User {objectid: $objectId}) SET n.highvalue = $highvalue'
+    await tx.run(match_query, objectId=identifier, highvalue=highvalue)
 
 
 async def parse_group(tx: neo4j.Transaction, group: dict):
@@ -248,6 +260,23 @@ async def parse_group(tx: neo4j.Transaction, group: dict):
         query = build_add_edge_query(member['ObjectType'], 'Group', 'MemberOf', '{isacl: false}')
         await tx.run(query, props=dict(source=member['ObjectIdentifier'], target=identifier))
 
+    suffixes = [
+        "-512",
+        "-516",
+        "-519",
+        "S-1-5-32-544",
+        "-518",
+        "-526",
+        "-527",
+        "S-1-5-9",
+    ]
+
+    highvalue = any(identifier.endswith(suffix) for suffix in suffixes)
+
+    # Add a mapping and highvalue setting
+    match_query = 'MATCH (n:Group {objectid: $objectId}) SET n.highvalue = $highvalue'
+    await tx.run(match_query, objectId=identifier, highvalue=highvalue)
+
 
 async def parse_domain(tx: neo4j.Transaction, domain: dict):
     """Parse a domain object.
@@ -264,8 +293,10 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
     if 'Aces' in domain and domain['Aces'] is not None:
         await process_ace_list(domain['Aces'], identifier, 'Domain', tx)
 
-    trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown'}
+    trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown',}
+
     if 'Trusts' in domain and domain['Trusts'] is not None:
+
         query = build_add_edge_query('Domain', 'Domain', 'TrustedBy', '{sidfiltering: prop.sidfiltering, trusttype: prop.trusttype, transitive: prop.transitive, isacl: false}')
         for trust in domain['Trusts']:
             trust_type = trust['TrustType']
@@ -279,6 +310,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                     transitive=trust['IsTransitive'],
                     sidfiltering=trust['SidFilteringEnabled'],
                 )
+
             elif direction in [1, 3]:
                 props = dict(
                     source=identifier,
@@ -300,6 +332,35 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                 continue
             await tx.run(query, props=props)
 
+    members = [
+        GenericMember(MemberType="Group", MemberId=f"{domain['Sid']}-515"),
+        GenericMember(MemberType="Group", MemberId=f"{domain['Sid']}-513")
+    ]
+
+    everyone = Group(
+        ObjectIdentifier=f"{domain['Name']}-S-1-1-0",
+        Domain=domain['Name'],
+        Members=members,
+        Properties={"name": f"EVERYONE@{domain['Name']}", "domain": domain['Name']}
+    )
+
+    authUsers = Group(
+        ObjectIdentifier=f"{domain['Name']}-S-1-5-11",
+        Domain=domain['Name'],
+        Members=members,
+        Properties={"name": f"AUTHENTICATED USERS@{domain['Name']}", "domain": domain['Name']}
+    )
+
+    await tx.run("CREATE (g:Group {objectid: $objectId, domain: $domain, name: $name})",
+                 objectId=everyone.ObjectIdentifier, domain=everyone.Domain, name=everyone.Properties["name"])
+    await tx.run("CREATE (g:Group {objectid: $objectId, domain: $domain, name: $name})",
+                 objectId=authUsers.ObjectIdentifier, domain=authUsers.Domain, name=authUsers.Properties["name"])
+
+    await tx.run("MATCH (d:Domain {objectid: $domainId}), (g:Group {objectid: $groupId}) MERGE (d)-[:Contains]->(g)",
+                 domainId=identifier, groupId=everyone.ObjectIdentifier)
+    await tx.run("MATCH (d:Domain {objectid: $domainId}), (g:Group {objectid: $groupId}) MERGE (d)-[:Contains]->(g)",
+                 domainId=identifier, groupId=authUsers.ObjectIdentifier)
+
     if 'ChildObjects' in domain and domain['ChildObjects']:
         targets = domain['ChildObjects']
         for target in targets:
@@ -307,12 +368,12 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in domain and domain['Links']:
-        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        query = build_add_edge_query('GPO', 'Domain', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in domain['Links']:
             await tx.run(
                 query,
-                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
-            )
+                props=dict(source=gpo['GUID'].upper(), target=identifier, enforced=gpo['IsEnforced'])
+                         )
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -331,6 +392,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                     query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                     for computer in affected_computers:
                         await tx.run(query, props=dict(source=computer['ObjectIdentifier'], target=target['ObjectIdentifier']))
+
 
 async def parse_container(tx: neo4j.Transaction, container: dict):
     """Parse a Container object.
@@ -355,7 +417,7 @@ async def parse_container(tx: neo4j.Transaction, container: dict):
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
 
-async def parse_zipfile(filename: str, driver: neo4j.Driver):
+async def parse_zipfile(filename: str, driver: neo4j.Driver, db: str):
     """Parse a bloodhound zip file.
 
     Arguments:
@@ -371,10 +433,10 @@ async def parse_zipfile(filename: str, driver: neo4j.Driver):
             with NamedTemporaryFile(suffix=basename(file)) as temp:
                 temp.write(zip_file.read(file))
                 temp.flush()
-                await parse_file(temp.name, driver)
+                await parse_file(temp.name, driver, db)
 
 
-async def parse_file(filename: str, driver: neo4j.AsyncDriver):
+async def parse_file(filename: str, driver: neo4j.AsyncDriver, db: str):
     """Parse a bloodhound file.
 
     Arguments:
@@ -385,9 +447,9 @@ async def parse_file(filename: str, driver: neo4j.AsyncDriver):
 
     if filename.endswith('.zip'):
         logging.info("File appears to be a zip file, importing all containing JSON files..")
-        await parse_zipfile(filename, driver)
+        await parse_zipfile(filename, driver, db)
         return
-
+    
     with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
         meta = ijson.items(f, 'meta')
         for o in meta:
@@ -415,7 +477,7 @@ async def parse_file(filename: str, driver: neo4j.AsyncDriver):
     count = 0
     f = codecs.open(filename, 'r', encoding='utf-8-sig')
     objs = ijson.items(f, 'data.item')
-    async with driver.session() as session:
+    async with driver.session(database=db) as session:
         for entry in objs:
             try:
                 await session.write_transaction(parse_function, entry)
